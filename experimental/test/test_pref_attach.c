@@ -63,7 +63,7 @@ void test_pref_attach_1 (void)
     // //--------------------------------------------------------------------------
 
     // OK (GrB_free (&A)) ;
-    // LAGraph_Finalize (msg) ;
+    LAGraph_Finalize (msg) ;
 }
 
 // void test_RMAT_2 (void)
@@ -274,6 +274,7 @@ void test_pref_attach_1 (void)
 
 TEST_LIST =
 {
+    { "pref_attach_1", test_pref_attach_1 },
     // {"RMAT_Generate_basic", test_RMAT_1},
     // {"RMAT_Generate_31", test_RMAT_2},
     // {"RMAT_Generate_32", test_RMAT_3},

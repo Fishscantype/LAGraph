@@ -1754,6 +1754,21 @@ int LAGraph_DIMACSMaxFlowRead
     char* msg
 ) ;
 
+//------------------------------------------------------------------------------
+// RMAT and preference attachment methods
+//------------------------------------------------------------------------------
+
+int LAGraph_RMAT
+(
+    // output
+    GrB_Matrix *Yhandle,    // Y, created on output
+    // input:
+    int log2_nodes,
+    int num_edges, //approximate number of edges
+    uint64_t seed,
+    double a, double b, double c, double d, // should add to 1.0
+    char *msg
+) ;
 
 #if defined ( __cplusplus )
 }

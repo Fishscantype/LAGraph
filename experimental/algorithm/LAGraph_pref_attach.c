@@ -243,8 +243,8 @@ int LAGraph_pref_attach
     range_seed[GxB_END] = seed_nvals_i - 1 ;
     range_seed[GxB_INC] = 1 ;
 
-    GRB_TRY (GxB_Vector_assign (Output_i, NULL, NULL, Input_i, range_seed, GxB_RANGE, NULL)) ;
-    GRB_TRY (GxB_Vector_assign (Output_j, NULL, NULL, Input_j, range_seed, GxB_RANGE, NULL)) ;
+    GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Input_i, range_seed, GxB_RANGE, NULL)) ;
+    GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Input_j, range_seed, GxB_RANGE, NULL)) ;
 
     // //--------------------------------------------------------------------------
     // // Create random state vector
@@ -312,9 +312,10 @@ int LAGraph_pref_attach
         GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_out, scale_scalar, NULL)) ;
 
         GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-        GRB_TRY (GrB_Vector_extract (Batch_gather, NULL, NULL, Output_j, Scaled_state, outgoing_edges_in_batch, NULL)) ;
+        GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_j,
+            Scaled_state, NULL)) ;
 
-        GRB_TRY (GxB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
+        GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
         
         Chunk_Index_Params chunk_out_params ;
         chunk_out_params.base_node = curr_node ;
@@ -324,7 +325,7 @@ int LAGraph_pref_attach
         GRB_TRY (GrB_Vector_clear (Batch_chunk)) ;
         GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_random_out, chunk_index_scalar, NULL)) ;
 
-        GRB_TRY (GxB_Vector_assign (Output_i, NULL, NULL, Batch_chunk, range_out, GxB_RANGE, NULL)) ;
+        GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_chunk, range_out, GxB_RANGE, NULL)) ;
 
         //---------Incoming edges section---------
         if(incoming_edges > 0){
@@ -347,9 +348,10 @@ int LAGraph_pref_attach
             GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_in, scale_scalar, NULL)) ;
 
             GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_gather, NULL, NULL, Output_i, Scaled_state, incoming_edges_in_batch, NULL)) ;
+            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_i,
+                Scaled_state, NULL)) ;
 
-            GRB_TRY (GxB_Vector_assign (Output_i, NULL, NULL, Batch_gather, range_in, GxB_RANGE, NULL)) ;
+            GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_gather, range_in, GxB_RANGE, NULL)) ;
             
             Chunk_Index_Params chunk_out_params ;
             chunk_out_params.base_node = curr_node ;
@@ -359,7 +361,7 @@ int LAGraph_pref_attach
             GRB_TRY (GrB_Vector_clear (Batch_chunk)) ;
             GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_random_in, chunk_index_scalar, NULL)) ;
 
-            GRB_TRY (GxB_Vector_assign (Output_j, NULL, NULL, Batch_chunk, range_in, GxB_RANGE, NULL)) ;
+            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_chunk, range_in, GxB_RANGE, NULL)) ;
         }
 
         //TODO: section for corners

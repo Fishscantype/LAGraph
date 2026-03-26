@@ -1764,9 +1764,27 @@ int LAGraph_RMAT
     GrB_Matrix *Yhandle,    // Y, created on output
     // input:
     int log2_nodes,
-    int num_edges, //approximate number of edges
+    GrB_Index num_edges, //approximate number of edges
     uint64_t seed,
     double a, double b, double c, double d, // should add to 1.0
+    char *msg
+) ;
+
+int LAGraph_pref_attach
+(
+    // output
+    GrB_Matrix *Yhandle,    // Y, created on output
+    // input:
+    GrB_Index num_nodes,
+    uint64_t seed,
+    GrB_Index batch_size,
+    double batch_growth_factor,
+    GrB_Vector Input_i,
+    GrB_Vector Input_j,
+    GrB_Index incoming_edges,
+    GrB_Index outgoing_edges,
+    bool directed, // if directed, do outgoing edges and mirror
+    double batch_alpha, // mult. factor for batch corner density calculation
     char *msg
 ) ;
 

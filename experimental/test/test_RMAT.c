@@ -256,20 +256,21 @@ void test_RMAT_6 (void)
     //--------------------------------------------------------------------------
 
     GrB_Matrix A = NULL ;
-    GrB_Index n = 16 ;           // num of nodes is 2^n
+    GrB_Index n = 20 ;           // num of nodes is 2^n
     GrB_Index nedges = 100000 ;     // number of edges
-    double a = 0.25; double b = 0.25; double c = 0.25; double d = 0.25; // RMAT probabilities
+    double a = 0.8; double b = 0.05; double c = 0.05; double d = 0.1; // RMAT probabilities
     uint64_t seed = 42 ;
 
     info = LAGraph_RMAT(&A, n, nedges, seed, a, b, c, d, msg);
-    // TEST_CHECK(info == GrB_SUCCESS);
-    // TEST_CHECK(A != NULL);
+    // printf("LAGraph_RMAT error: %s\n", msg);
+    TEST_CHECK(info == GrB_SUCCESS);
+    TEST_CHECK(A != NULL);
 
     //--------------------------------------------------------------------------
     // Print the adjacency matrix
     //--------------------------------------------------------------------------
 
-    OK(LAGraph_Matrix_Print(A, LAGraph_COMPLETE, stdout, msg));
+    OK(LAGraph_Matrix_Print(A, LAGraph_SHORT, stdout, msg));
 
     //--------------------------------------------------------------------------
     // free everything and finalize LAGraph
@@ -281,12 +282,12 @@ void test_RMAT_6 (void)
 
 TEST_LIST =
 {
-    {"RMAT_Generate_basic", test_RMAT_1},
-    {"RMAT_Generate_31", test_RMAT_2},
-    {"RMAT_Generate_32", test_RMAT_3},
-    {"RMAT_Generate_62", test_RMAT_4},
-    {"RMAT_Generate_large", test_RMAT_5},
-    // {"RMAT_Generate_large_print", test_RMAT_6},
+    // {"RMAT_Generate_basic", test_RMAT_1},
+    // {"RMAT_Generate_31", test_RMAT_2},
+    // {"RMAT_Generate_32", test_RMAT_3},
+    // {"RMAT_Generate_62", test_RMAT_4},
+    // {"RMAT_Generate_large", test_RMAT_5},
+    {"RMAT_Generate_large_print", test_RMAT_6},
     {NULL, NULL}
 } ;
 

@@ -25,8 +25,7 @@
     GrB_Vector_free (&Output_i) ;               \
     GrB_Vector_free (&Output_j) ;               \
     GrB_Scalar_free (&Scalar_one) ;             \
-    GrB_Vector_free (&Batch_random_in) ;        \
-    GrB_Vector_free (&Batch_random_out) ;       \
+    GrB_Vector_free (&Batch_random) ;           \
     GrB_Vector_free (&Batch_gather) ;           \
     GrB_Vector_free (&Batch_chunk) ;            \
     GrB_IndexUnaryOp_free (&scale_op) ;         \
@@ -132,27 +131,6 @@ void pref_attach_chunk_index_op
 "    *((uint64_t *) z) = p->base_node + (uint64_t) i / p->edges;            \n"\
 "}                                                                       "
 
-static uint64_t calc_self_edges
-(
-    uint64_t nodes_in_batch,
-    int edges_per_node,
-    uint64_t curr_node,
-    double batch_alpha
-)
-{
-    if(nodes_in_batch <= 1 || edges_per_node <= 0 || curr_node <= 1){
-        return 0 ;
-    }
-    // cap number of incoming and outgoing self edges at number of spaces below diagonal
-    uint64_t cap = (nodes_in_batch * (nodes_in_batch - 1)) / 2 ; 
-    if(isinf(batch_alpha)){
-        return cap ;
-    }
-    double density = (double) edges_per_node / (double) (curr_node + nodes_in_batch - 1) ;
-    uint64_t result = (uint64_t)((batch_alpha * density / 2.0) * (double)(nodes_in_batch * nodes_in_batch)) ;
-    return (result > cap) ? cap : result ;
-}
-
 int LAGraph_pref_attach
 (
     // output
@@ -167,7 +145,6 @@ int LAGraph_pref_attach
     GrB_Index incoming_edges,
     GrB_Index outgoing_edges,
     bool directed, // if directed, do outgoing edges and mirror
-    double batch_alpha, // mult. factor for batch corner density calculation
     char *msg
 )
 {
@@ -182,8 +159,7 @@ int LAGraph_pref_attach
     GrB_Vector Output_i = NULL ;
     GrB_Vector Output_j = NULL ;
     GrB_Scalar Scalar_one = NULL ;
-    GrB_Vector Batch_random_in = NULL ;
-    GrB_Vector Batch_random_out = NULL ;
+    GrB_Vector Batch_random = NULL ;
     GrB_Vector Batch_gather = NULL ;
     GrB_Vector Batch_chunk = NULL ;
     GrB_IndexUnaryOp scale_op = NULL ;
@@ -211,9 +187,9 @@ int LAGraph_pref_attach
     LG_ASSERT_MSG (batch_size > 0, GrB_INVALID_VALUE, "batch_size must be positive") ;
     LG_ASSERT_MSG (batch_growth_factor >= 1, GrB_INVALID_VALUE, "batch_growth_factor must be >= 1") ;
  
-    // //--------------------------------------------------------------------------
-    // // Evaluate seed vectors
-    // //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // Evaluate seed vectors
+    //--------------------------------------------------------------------------
 
     GrB_Index seed_nvals_i ;
     GRB_TRY (GrB_Vector_nvals (&seed_nvals_i, Input_i)) ;
@@ -227,9 +203,9 @@ int LAGraph_pref_attach
     GRB_TRY (GrB_reduce (&max_j, NULL, GrB_MAX_MONOID_UINT64, Input_j, NULL)) ;
     uint64_t base_node = ((max_i > max_j) ? max_i : max_j) + 1 ;
 
-    // //--------------------------------------------------------------------------
-    // // Calculate num_edges and num_batches
-    // //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // Calculate num_edges and num_batches
+    //--------------------------------------------------------------------------
 
     if(!directed){
         incoming_edges = 0 ;
@@ -240,25 +216,21 @@ int LAGraph_pref_attach
     uint64_t num_batches = 0 ;
     uint64_t nodes_counted = 0 ;
     uint64_t b_size = batch_size ;
-    uint64_t cnode = base_node ;
     while(nodes_counted < num_nodes_to_add){
         uint64_t nodes_in_batch = b_size ;
         if (nodes_counted + nodes_in_batch > num_nodes_to_add){
             nodes_in_batch = num_nodes_to_add - nodes_counted ;
         }
-        uint64_t self_in  = calc_self_edges (nodes_in_batch, incoming_edges, cnode, batch_alpha) ;
-        uint64_t self_out = calc_self_edges (nodes_in_batch, outgoing_edges, cnode, batch_alpha) ;
-        num_edges += nodes_in_batch * (incoming_edges + outgoing_edges) + self_in + self_out ;
+        num_edges += nodes_in_batch * (incoming_edges + outgoing_edges) ;
         nodes_counted += nodes_in_batch ;
-        cnode += nodes_in_batch ;
         ++num_batches ;
         b_size *= batch_growth_factor ;
         // printf ("%" PRIu64 " counted out of %" PRIu64 "\n", (uint64_t) nodes_counted, (uint64_t) num_nodes_to_add) ;
     }
     
-    // //--------------------------------------------------------------------------
-    // // Initialize Output_i and Output_j vectors
-    // //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // Initialize Output_i and Output_j vectors
+    //--------------------------------------------------------------------------
 
     //TODO: come back and reduce to uint32_t if possible
     GRB_TRY (GrB_Vector_new (&Output_i, GrB_UINT64, num_edges)) ;
@@ -272,21 +244,17 @@ int LAGraph_pref_attach
     GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Input_i, range_seed, GxB_RANGE, NULL)) ;
     GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Input_j, range_seed, GxB_RANGE, NULL)) ;
 
-    // //--------------------------------------------------------------------------
-    // // Create random state vectors
-    // //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // Create random state vector
+    //--------------------------------------------------------------------------
 
     GRB_TRY (GrB_Vector_new (&State, GrB_UINT64, num_edges)) ;
     GRB_TRY (GrB_assign (State, NULL, NULL, 0, GrB_ALL, num_edges, NULL)) ;
     LG_TRY (LAGraph_Random_Seed (State, seed, msg)) ;
-    
-    GRB_TRY (GrB_Vector_new (&State2, GrB_UINT64, num_edges)) ;
-    GRB_TRY (GrB_assign (State2, NULL, NULL, 0, GrB_ALL, num_edges, NULL)) ;
-    LG_TRY (LAGraph_Random_Seed (State2, seed+1, msg)) ;
 
-    // //--------------------------------------------------------------------------
-    // // Prepare parameter structs, operators, and workspace vectors
-    // //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // Prepare parameter structs, operators, and workspace vectors
+    //--------------------------------------------------------------------------
 
     GRB_TRY (GrB_Type_new (&scale_param_type, sizeof (Scale_Params))) ;
     GRB_TRY (GrB_Type_new (&chunk_index_param_type, sizeof (Chunk_Index_Params))) ;
@@ -299,14 +267,13 @@ int LAGraph_pref_attach
     GRB_TRY (GrB_IndexUnaryOp_new (&chunk_index_op, (GxB_index_unary_function) pref_attach_chunk_index_op, GrB_UINT64, GrB_UINT64, chunk_index_param_type)) ;
 
     GRB_TRY (GrB_Vector_new (&Scaled_state, GrB_UINT64, num_edges)) ;
-    GRB_TRY (GrB_Vector_new (&Batch_random_out, GrB_UINT64, num_edges)) ;
-    GRB_TRY (GrB_Vector_new (&Batch_random_in, GrB_UINT64, num_edges)) ;
+    GRB_TRY (GrB_Vector_new (&Batch_random, GrB_UINT64, num_edges)) ;
     GRB_TRY (GrB_Vector_new (&Batch_gather, GrB_UINT64, num_edges)) ;
     GRB_TRY (GrB_Vector_new (&Batch_chunk, GrB_UINT64, num_edges)) ;
 
-    // //--------------------------------------------------------------------------
-    // // Begin main loop
-    // //--------------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // Begin main loop
+    //--------------------------------------------------------------------------
 
     uint64_t curr_node = base_node ;
     GrB_Index curr_edge = seed_nvals_i ;
@@ -315,18 +282,16 @@ int LAGraph_pref_attach
     for(int batch = 0; batch < num_batches; ++batch){
         // Prepare variables for batch
         uint64_t nodes_in_batch = (curr_batch_size > num_nodes - curr_node ? num_nodes - curr_node : curr_batch_size) ;
-        GrB_Index incoming_edges_in_batch = (GrB_Index) nodes_in_batch * (GrB_Index) incoming_edges ;
         GrB_Index outgoing_edges_in_batch = (GrB_Index) nodes_in_batch * (GrB_Index) outgoing_edges ;
-        uint64_t self_edges_in  = calc_self_edges (nodes_in_batch, incoming_edges, curr_node, batch_alpha) ;
-        uint64_t self_edges_out = calc_self_edges (nodes_in_batch, outgoing_edges, curr_node, batch_alpha) ;
-        GrB_Index edges_in_batch =  incoming_edges_in_batch + outgoing_edges_in_batch + self_edges_in + self_edges_out;
+        GrB_Index incoming_edges_in_batch = (GrB_Index) nodes_in_batch * (GrB_Index) incoming_edges ;
+        GrB_Index edges_in_batch = incoming_edges_in_batch + outgoing_edges_in_batch ;
         if(edges_in_batch <= 0) {
             break ;
         }
 
         //---------Outgoing edges section---------
         if(outgoing_edges_in_batch > 0){
-            GRB_TRY (GrB_Vector_resize (Batch_random_out, outgoing_edges_in_batch)) ;
+            GRB_TRY (GrB_Vector_resize (Batch_random, outgoing_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Scaled_state, outgoing_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Batch_gather, outgoing_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Batch_chunk, outgoing_edges_in_batch)) ;
@@ -339,35 +304,36 @@ int LAGraph_pref_attach
             range_out[GxB_END] = batch_end ;
             range_out[GxB_INC] = 1 ;
 
-            GRB_TRY (GrB_Vector_clear (Batch_random_out)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_random_out, NULL, NULL, State, range_out, GxB_RANGE, NULL)) ;
-            
-            Scale_Params scale_out_params ;
-            scale_out_params.base_edge = (uint64_t) curr_edge ;
-            GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_out_params)) ;
-
-            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_out, scale_scalar, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_j, Scaled_state, NULL)) ;
-
-            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
-            
             Chunk_Index_Params chunk_out_params ;
             chunk_out_params.base_node = curr_node ;
             chunk_out_params.edges = (uint64_t) outgoing_edges ;
             GRB_TRY (GrB_Scalar_setElement_UDT (chunk_index_scalar, &chunk_out_params)) ;
 
-            GRB_TRY (GrB_Vector_clear (Batch_chunk)) ;
-            GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_random_out, chunk_index_scalar, NULL)) ;
+            GRB_TRY (GrB_assign (Batch_chunk, NULL, NULL, (uint64_t) 0, GrB_ALL, outgoing_edges_in_batch, NULL)) ;
+            GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_chunk, chunk_index_scalar, NULL)) ;
 
             GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_chunk, range_out, GxB_RANGE, NULL)) ;
+            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_chunk, range_out, GxB_RANGE, NULL)) ;
+
+            GRB_TRY (GrB_Vector_clear (Batch_random)) ;
+            GRB_TRY (GrB_Vector_extract (Batch_random, NULL, NULL, State, range_out, GxB_RANGE, NULL)) ;
+
+            Scale_Params scale_out_params ;
+            scale_out_params.base_edge = (uint64_t) (curr_edge + outgoing_edges_in_batch) ;
+            GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_out_params)) ;
+
+            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
+            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random, scale_scalar, NULL)) ;
+
+            GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
+            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_j, Scaled_state, NULL)) ;
+
+            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
         }
 
         //---------Incoming edges section---------
         if(incoming_edges_in_batch > 0){
-            GRB_TRY (GrB_Vector_resize (Batch_random_in, incoming_edges_in_batch)) ;
+            GRB_TRY (GrB_Vector_resize (Batch_random, incoming_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Scaled_state, incoming_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Batch_gather, incoming_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Batch_chunk, incoming_edges_in_batch)) ;
@@ -380,110 +346,30 @@ int LAGraph_pref_attach
             range_in[GxB_END] = batch_end ;
             range_in[GxB_INC] = 1 ;
 
-            GRB_TRY (GrB_Vector_clear (Batch_random_in)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_random_in, NULL, NULL, State, range_in, GxB_RANGE, NULL)) ;
-            
-            Scale_Params scale_in_params ;
-            scale_in_params.base_edge = (uint64_t) curr_edge ;
-            GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_in_params)) ;
-
-            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_in, scale_scalar, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_i, Scaled_state, NULL)) ;
-
-            GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_gather, range_in, GxB_RANGE, NULL)) ;
-            
             Chunk_Index_Params chunk_in_params ;
             chunk_in_params.base_node = curr_node ;
             chunk_in_params.edges = (uint64_t) incoming_edges ;
             GRB_TRY (GrB_Scalar_setElement_UDT (chunk_index_scalar, &chunk_in_params)) ;
 
-            GRB_TRY (GrB_Vector_clear (Batch_chunk)) ;
-            GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_random_in, chunk_index_scalar, NULL)) ;
+            GRB_TRY (GrB_assign (Batch_chunk, NULL, NULL, (uint64_t) 0, GrB_ALL, incoming_edges_in_batch, NULL)) ;
+            GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_chunk, chunk_index_scalar, NULL)) ;
 
             GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_chunk, range_in, GxB_RANGE, NULL)) ;
-        }
 
-        //---------Outgoing self-edges section---------
-        if(self_edges_out > 0){
-            GRB_TRY (GrB_Vector_resize (Batch_random_out, self_edges_out)) ;
-            GRB_TRY (GrB_Vector_resize (Scaled_state, self_edges_out)) ;
-            GRB_TRY (GrB_Vector_resize (Batch_gather, self_edges_out)) ;
-            GRB_TRY (GrB_Vector_resize (Batch_chunk, self_edges_out)) ;
+            GRB_TRY (GrB_Vector_clear (Batch_random)) ;
+            GRB_TRY (GrB_Vector_extract (Batch_random, NULL, NULL, State, range_in, GxB_RANGE, NULL)) ;
 
-            GrB_Index batch_begin = curr_edge + outgoing_edges_in_batch + incoming_edges_in_batch ;
-            GrB_Index batch_end = batch_begin + self_edges_out - 1 ;
-
-            GrB_Index range_self_out[3] ;
-            range_self_out[GxB_BEGIN] = batch_begin ;
-            range_self_out[GxB_END] = batch_end ;
-            range_self_out[GxB_INC] = 1 ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_random_out)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_random_out, NULL, NULL, State, range_self_out, GxB_RANGE, NULL)) ;
-
-            Scale_Params scale_self_out_params ;
-            scale_self_out_params.base_edge = nodes_in_batch ;
-            GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_self_out_params)) ;
+            Scale_Params scale_in_params ;
+            scale_in_params.base_edge = (uint64_t) (curr_edge + outgoing_edges_in_batch) ;
+            GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_in_params)) ;
 
             GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_out, scale_scalar, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_chunk)) ;
-            GRB_TRY (GrB_Vector_apply_BinaryOp2nd_UINT64 (Batch_chunk, NULL, NULL, GrB_PLUS_UINT64, Scaled_state, curr_node, NULL)) ;
-            GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_chunk, range_self_out, GxB_RANGE, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_random_out)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_random_out, NULL, NULL, State2, range_self_out, GxB_RANGE, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_out, scale_scalar, NULL)) ;
+            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random, scale_scalar, NULL)) ;
 
             GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-            GRB_TRY (GrB_Vector_apply_BinaryOp2nd_UINT64 (Batch_gather, NULL, NULL, GrB_PLUS_UINT64, Scaled_state, curr_node, NULL)) ;
-            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_self_out, GxB_RANGE, NULL)) ;
-        }
+            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_i, Scaled_state, NULL)) ;
 
-        //---------Incoming self-edges section---------
-        if(self_edges_in > 0){
-            GRB_TRY (GrB_Vector_resize (Batch_random_in, self_edges_in)) ;
-            GRB_TRY (GrB_Vector_resize (Scaled_state, self_edges_in)) ;
-            GRB_TRY (GrB_Vector_resize (Batch_gather, self_edges_in)) ;
-            GRB_TRY (GrB_Vector_resize (Batch_chunk, self_edges_in)) ;
-
-            GrB_Index batch_begin = curr_edge + outgoing_edges_in_batch + incoming_edges_in_batch + self_edges_out ;
-            GrB_Index batch_end = batch_begin + self_edges_in - 1 ;
-
-            GrB_Index range_self_in[3] ;
-            range_self_in[GxB_BEGIN] = batch_begin ;
-            range_self_in[GxB_END] = batch_end ;
-            range_self_in[GxB_INC] = 1 ;
-
-            Scale_Params scale_self_in_params ;
-            scale_self_in_params.base_edge = nodes_in_batch ;
-            GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_self_in_params)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_random_in)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_random_in, NULL, NULL, State, range_self_in, GxB_RANGE, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_in, scale_scalar, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_chunk)) ;
-            GRB_TRY (GrB_Vector_apply_BinaryOp2nd_UINT64 (Batch_chunk, NULL, NULL, GrB_PLUS_UINT64, Scaled_state, curr_node, NULL)) ;
-            GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_chunk, range_self_in, GxB_RANGE, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_random_in)) ;
-            GRB_TRY (GrB_Vector_extract (Batch_random_in, NULL, NULL, State2, range_self_in, GxB_RANGE, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random_in, scale_scalar, NULL)) ;
-
-            GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-            GRB_TRY (GrB_Vector_apply_BinaryOp2nd_UINT64 (Batch_gather, NULL, NULL, GrB_PLUS_UINT64, Scaled_state, curr_node, NULL)) ;
-            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_self_in, GxB_RANGE, NULL)) ;
+            GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_gather, range_in, GxB_RANGE, NULL)) ;
         }
 
         curr_node += nodes_in_batch ;

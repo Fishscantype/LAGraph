@@ -1784,7 +1784,6 @@ int LAGraph_pref_attach
     GrB_Index incoming_edges,
     GrB_Index outgoing_edges,
     bool directed, // if directed, do outgoing edges and mirror
-    double batch_alpha, // mult. factor for batch corner density calculation
     char *msg
 ) ;
 

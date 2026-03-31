@@ -325,7 +325,7 @@ int LAGraph_RMAT
     LG_ASSERT_MSG (log2_nodes <= 60, GrB_INVALID_VALUE, "log2_nodes cannot exceed 60") ;
     LG_ASSERT_MSG (num_edges > 0, GrB_INVALID_VALUE, "num_edges must be positive") ;
     double sum = a + b + c + d ;
-    double tol = 1.0 / (double) ((uint64_t) 1 << 8);
+    double tol = 1e-8;
     //FIXME: double check precision and error tolerance
     LG_ASSERT_MSG (fabs(sum - 1.0) <= tol, GrB_INVALID_VALUE, "a,b,c,d must add up to 1.0 (within tolerance 1e-8)") ;
     //--------------------------------------------------------------------------

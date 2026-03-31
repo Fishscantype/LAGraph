@@ -58,7 +58,6 @@ void test_pref_attach_1 (void)
     GrB_Index outgoing_edges = 2 ;
     GrB_Index incoming_edges = 0 ;
     bool directed = false ;
-    double batch_alpha = 0.0 ;
 
     info = LAGraph_pref_attach (
         &A,
@@ -71,7 +70,6 @@ void test_pref_attach_1 (void)
         incoming_edges,
         outgoing_edges,
         directed,
-        batch_alpha,
         msg
     ) ;
 
@@ -129,12 +127,11 @@ void test_pref_attach_2 (void)
     }
 
     uint64_t seed = 42 ;
-    GrB_Index batch_size = 5 ;
+    GrB_Index batch_size = 3 ;
     double batch_growth_factor = 1.2 ;
-    GrB_Index outgoing_edges = 15 ;
-    GrB_Index incoming_edges = 1 ;
+    GrB_Index outgoing_edges = 3 ;
+    GrB_Index incoming_edges = 2 ;
     bool directed = true ;
-    double batch_alpha = 1.0 ;
 
     GrB_Index base_node = (GrB_Index) (max_node + 1) ;
     GrB_Index num_nodes = base_node + 1000 ;
@@ -150,7 +147,6 @@ void test_pref_attach_2 (void)
         incoming_edges,
         outgoing_edges,
         directed,
-        batch_alpha,
         msg
     ) ;
 

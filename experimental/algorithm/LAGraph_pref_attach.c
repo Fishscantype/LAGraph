@@ -39,7 +39,8 @@
 #define LG_FREE_ALL                         \
 {                                           \
     LG_FREE_WORK ;                          \
-    GrB_free (&Y) ;                         \
+    GrB_free (&M) ;                         \
+    LAGraph_Delete (&G, msg) ;              \
 }
 
 #include "LG_internal.h"
@@ -48,10 +49,14 @@
 typedef struct
 {
     uint64_t base_edge ;
+    uint64_t base_node ;
+    uint64_t edges_per_node ;
 } Scale_Params ;
 #define SCALE_PARAMS                \
 "typedef struct {                   \n"\
 "    uint64_t base_edge ;           \n"\
+"    uint64_t base_node ;           \n"\
+"    uint64_t edges_per_node ;      \n"\
 "} Scale_Params ;                   "
 
 typedef struct
@@ -77,11 +82,13 @@ void pref_attach_scale_op
 {
     const uint64_t *r = (const uint64_t *) x ;
     const Scale_Params *p = (const Scale_Params *) y ;
-    if (p->base_edge == 0){
+    uint64_t node_offset = (uint64_t) i / p->edges_per_node ;
+    uint64_t edge_count = p->base_edge + node_offset * p->edges_per_node ;
+    if (edge_count == 0){
         *((uint64_t *) z) = 0 ;
     } else {
         double scaled = ((double)(*r) / (double) UINT64_MAX)
-            * (double)(p->base_edge - 1) ;
+            * (double)(edge_count - 1) ;
         *((uint64_t *) z) = (uint64_t) scaled ;
     }
 }
@@ -96,11 +103,13 @@ void pref_attach_scale_op
 "{                                                                       \n"\
 "    const uint64_t *r = (const uint64_t *) x ;                   \n"\
 "    const Scale_Params *p = (const Scale_Params *) y ;                  \n"\
-"    if (p->base_edge == 0){                                            \n"\
+"    uint64_t node_offset = (uint64_t) i / p->edges_per_node ;          \n"\
+"    uint64_t edge_count = p->base_edge + node_offset * p->edges_per_node ; \n"\
+"    if (edge_count == 0){                                              \n"\
 "        *((uint64_t *) z) = 0 ;                                        \n"\
 "    } else {                                                            \n"\
 "        double scaled = ((double)(*r) / (double) UINT64_MAX)    \n"\
-"            * (double)(p->base_edge - 1) ;                              \n"\
+"            * (double)(edge_count - 1) ;                                \n"\
 "        *((uint64_t *) z) = (uint64_t) scaled ;                        \n"\
 "    }                                                                   \n"\
 "}                                                                       "
@@ -134,7 +143,7 @@ void pref_attach_chunk_index_op
 int LAGraph_pref_attach
 (
     // output
-    GrB_Matrix *Yhandle,    // Y, created on output
+    LAGraph_Graph *Yhandle,    // Y, created on output
     // input:
     GrB_Index num_nodes,
     uint64_t seed,
@@ -168,7 +177,8 @@ int LAGraph_pref_attach
     GrB_Type chunk_index_param_type = NULL ;
     GrB_Scalar scale_scalar = NULL ;
     GrB_Scalar chunk_index_scalar = NULL ;
-    GrB_Matrix Y = NULL ;
+    GrB_Matrix M = NULL ;
+    LAGraph_Graph G = NULL ;
     
     LG_CLEAR_MSG ;
 
@@ -224,7 +234,7 @@ int LAGraph_pref_attach
         num_edges += nodes_in_batch * (incoming_edges + outgoing_edges) ;
         nodes_counted += nodes_in_batch ;
         ++num_batches ;
-        b_size *= batch_growth_factor ;
+        b_size = (b_size * batch_growth_factor == 0 ? 1 : b_size * batch_growth_factor) ;
         // printf ("%" PRIu64 " counted out of %" PRIu64 "\n", (uint64_t) nodes_counted, (uint64_t) num_nodes_to_add) ;
     }
     
@@ -319,7 +329,9 @@ int LAGraph_pref_attach
             GRB_TRY (GrB_Vector_extract (Batch_random, NULL, NULL, State, range_out, GxB_RANGE, NULL)) ;
 
             Scale_Params scale_out_params ;
-            scale_out_params.base_edge = (uint64_t) (curr_edge + outgoing_edges_in_batch) ;
+            scale_out_params.base_edge = (uint64_t) curr_edge ;
+            scale_out_params.base_node = curr_node ;
+            scale_out_params.edges_per_node = (uint64_t) outgoing_edges ;
             GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_out_params)) ;
 
             GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
@@ -354,6 +366,7 @@ int LAGraph_pref_attach
             GRB_TRY (GrB_assign (Batch_chunk, NULL, NULL, (uint64_t) 0, GrB_ALL, incoming_edges_in_batch, NULL)) ;
             GRB_TRY (GrB_apply (Batch_chunk, NULL, NULL, chunk_index_op, Batch_chunk, chunk_index_scalar, NULL)) ;
 
+            GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_chunk, range_in, GxB_RANGE, NULL)) ;
             GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_chunk, range_in, GxB_RANGE, NULL)) ;
 
             GRB_TRY (GrB_Vector_clear (Batch_random)) ;
@@ -361,6 +374,8 @@ int LAGraph_pref_attach
 
             Scale_Params scale_in_params ;
             scale_in_params.base_edge = (uint64_t) (curr_edge + outgoing_edges_in_batch) ;
+            scale_in_params.base_node = curr_node ;
+            scale_in_params.edges_per_node = (uint64_t) incoming_edges ;
             GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_in_params)) ;
 
             GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
@@ -419,13 +434,84 @@ int LAGraph_pref_attach
     GRB_TRY (GrB_Scalar_setElement_UINT8(Scalar_one, 1)) ;
 
     //--------------------------------------------------------------------------
-    // Build output matrix
+    // Build output Graph
     //--------------------------------------------------------------------------
+    GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
+    GRB_TRY (GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, NULL)) ;
 
-    GRB_TRY (GrB_Matrix_new(&Y, GrB_UINT8, num_nodes, num_nodes)) ;
-    GRB_TRY (GxB_Matrix_build_Scalar_Vector(Y, Output_i, Output_j, Scalar_one, NULL)) ;
+    LAGraph_Kind kind = directed ? LAGraph_ADJACENCY_DIRECTED : LAGraph_ADJACENCY_UNDIRECTED ;
+    LG_TRY (LAGraph_New (&G, &M, kind, msg)) ;
+    M = NULL ;
+    LG_TRY (LAGraph_DeleteSelfEdges (G, msg)) ;
 
     LG_FREE_WORK ;
-    (*Yhandle) = Y ;
+    (*Yhandle) = G ;
     return (GrB_SUCCESS) ;
+    #if 0
+    printf("DEBUG: about to build matrix, num_nodes = %lu\n", (unsigned long) num_nodes) ;
+    
+    // Check Output_i and Output_j for out-of-range values
+    {
+        GrB_Index oi_size, oj_size, oi_nvals, oj_nvals ;
+        GrB_Vector_size(&oi_size, Output_i) ;
+        GrB_Vector_size(&oj_size, Output_j) ;
+        GrB_Vector_nvals(&oi_nvals, Output_i) ;
+        GrB_Vector_nvals(&oj_nvals, Output_j) ;
+        printf("DEBUG: Output_i size=%lu nvals=%lu, Output_j size=%lu nvals=%lu\n",
+            (unsigned long) oi_size, (unsigned long) oi_nvals,
+            (unsigned long) oj_size, (unsigned long) oj_nvals) ;
+        
+        GrB_Index num_edges_total = oi_size ;
+        for (GrB_Index k = 0 ; k < num_edges_total ; k++)
+        {
+            uint64_t vi = 0, vj = 0 ;
+            GrB_Info ri = GrB_Vector_extractElement_UINT64(&vi, Output_i, k) ;
+            GrB_Info rj = GrB_Vector_extractElement_UINT64(&vj, Output_j, k) ;
+            if (ri == GrB_SUCCESS && vi >= num_nodes)
+            {
+                printf("DEBUG: Output_i[%lu] = %lu >= num_nodes %lu\n",
+                    (unsigned long) k, (unsigned long) vi, (unsigned long) num_nodes) ;
+            }
+            if (rj == GrB_SUCCESS && vj >= num_nodes)
+            {
+                printf("DEBUG: Output_j[%lu] = %lu >= num_nodes %lu\n",
+                    (unsigned long) k, (unsigned long) vj, (unsigned long) num_nodes) ;
+            }
+            if (ri != GrB_SUCCESS)
+            {
+                printf("DEBUG: Output_i[%lu] missing (info=%d)\n",
+                    (unsigned long) k, ri) ;
+            }
+            if (rj != GrB_SUCCESS)
+            {
+                printf("DEBUG: Output_j[%lu] missing (info=%d)\n",
+                    (unsigned long) k, rj) ;
+            }
+        }
+    }
+
+    GrB_Info build_info ;
+    GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
+    printf("DEBUG: Matrix_new succeeded\n") ;
+
+    build_info = GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, GrB_PLUS_UINT8) ;
+    printf("DEBUG: Matrix_build returned: %d\n", build_info) ;
+    if (build_info != GrB_SUCCESS)
+    {
+        LG_FREE_ALL ;
+        return (build_info) ;
+    }
+
+    printf("DEBUG: about to create graph\n") ;
+    LAGraph_Kind kind = directed ? LAGraph_ADJACENCY_DIRECTED : LAGraph_ADJACENCY_UNDIRECTED ;
+    LG_TRY (LAGraph_New (&G, &M, kind, msg)) ;
+    M = NULL ;
+    printf("DEBUG: about to delete self edges\n") ;
+    LG_TRY (LAGraph_DeleteSelfEdges (G, msg)) ;
+    printf("DEBUG: done\n") ;
+
+    LG_FREE_WORK ;
+    (*Yhandle) = G ;
+    return (GrB_SUCCESS) ;
+    #endif
 }

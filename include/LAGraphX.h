@@ -1773,7 +1773,7 @@ int LAGraph_RMAT
 int LAGraph_pref_attach
 (
     // output
-    GrB_Matrix *Yhandle,    // Y, created on output
+    LAGraph_Graph *Yhandle,    // Y, created on output
     // input:
     GrB_Index num_nodes,
     uint64_t seed,

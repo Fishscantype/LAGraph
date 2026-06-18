@@ -15,24 +15,6 @@
 
 //------------------------------------------------------------------------------
 
-// UPDATE
-// Constructs a sparse roughly uniformly distributed random matrix with roughly
-// density*nnodes*nnodes entries.  If density == INFINITY then the matrix is
-// generated with all entries present.
-
-// UPDATE
-// If the type is GrB_FP32 or GrB_FP64, the values of A are returned in the
-// range [0,1].  If any duplicate entries are generated, the largest one is
-// take, so the distribution can be skewed towards 1 if the density is large.
-// This could be fixed by using the GxB_IGNORE_DUP operator, but this would
-// require SuiteSparse:GraphBLAS.
-
-// TODO: GrB_select with GrB_TRIL to grab the lower triangular matric. Do -1 to get rid of the diagonal to prevent self edges
-// make random matrix wrapper to create random graph, make graph square, then use above step to make symmetric IF directed is false
-// operator for ewise_add does not matter if tril and tril transpose are added, can just pass in grb_fp64 as type
-// operator: GrB_oneb_fp64 for unweighted graph
-// function for removing self edges: LAGrapg_delete_self_edges
-
 #define LG_FREE_WORK  \
     {                 \
         GrB_free(&A); \
@@ -126,12 +108,7 @@ GrB_Info LAGraph_Random_Graph // random graph of any built-in type
     LAGRAPH_TRY(LAGraph_New(G, &A, kind, msg));
     if (!allow_self_edges)
     {
-        (*G)->nself_edges = 0;
-    }
-
-    if (!allow_self_edges)
-    {
-        LAGRAPH_TRY(LAGraph_DeleteSelfEdges(A, msg));
+        LAGRAPH_TRY(LAGraph_DeleteSelfEdges(*G, msg));
     }
 
     //--------------------------------------------------------------------------

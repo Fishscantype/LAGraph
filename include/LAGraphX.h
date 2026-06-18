@@ -1761,7 +1761,7 @@ int LAGraph_DIMACSMaxFlowRead
 int LAGraph_RMAT
 (
     // output
-    GrB_Matrix *Yhandle,    // Y, created on output
+    LAGraph_Graph *Yhandle,    // Y, created on output
     // input:
     int log2_nodes,
     GrB_Index num_edges, //approximate number of edges

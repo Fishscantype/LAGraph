@@ -15,8 +15,6 @@
 
 //------------------------------------------------------------------------------
 
-// TODO: intro section
-
 #define LG_FREE_WORK                        \
 {                                           \
     /* free any workspace used here */      \
@@ -33,11 +31,9 @@
 
 #define LG_FREE_ALL                         \
 {                                           \
-    /* free any workspace used here */      \
     LG_FREE_WORK ;                          \
-    /* free all the output variable(s) */   \
-    GrB_free (&Y) ;                         \
-    /* take any other corrective action */  \
+    GrB_free (&M) ;                         \
+    LAGraph_Delete (&G, msg) ;              \
 }
 
 #include "LG_internal.h"
@@ -287,7 +283,7 @@ void RMAT_Operator_j_64
 int LAGraph_RMAT
 (
     // output
-    GrB_Matrix *Yhandle,    // Y, created on output
+    LAGraph_Graph *Yhandle,    // Y, created on output
     // input:
     int log2_nodes,
     GrB_Index num_edges, //approximate number of edges
@@ -310,7 +306,8 @@ int LAGraph_RMAT
     GrB_Vector Output_i = NULL ;
     GrB_Vector Output_j = NULL ;
     GrB_Scalar Scalar_one = NULL ;
-    GrB_Matrix Y = NULL ;
+    GrB_Matrix M = NULL ;
+    LAGraph_Graph G = NULL ;
     
     LG_CLEAR_MSG ;
 
@@ -383,15 +380,27 @@ int LAGraph_RMAT
     GRB_TRY (GrB_Scalar_new(&Scalar_one, GrB_UINT8)) ;
     GRB_TRY (GrB_Scalar_setElement_UINT8(Scalar_one, 1)) ;
 
+    // GRB_TRY (GrB_Matrix_new(&Y, GrB_UINT8, num_nodes, num_nodes)) ;
+    // GRB_TRY (GxB_Matrix_build_Scalar_Vector(Y, Output_i, Output_j, Scalar_one, NULL)) ;
+
+    // LG_FREE_WORK ;
+    // (*Yhandle) = Y ;
+    // return (GrB_SUCCESS) ;
+
     //--------------------------------------------------------------------------
-    // Build output matrix
+    // Build output Graph
     //--------------------------------------------------------------------------
 
     GrB_Index num_nodes = ((GrB_Index) 1) << log2_nodes ;
-    GRB_TRY (GrB_Matrix_new(&Y, GrB_UINT8, num_nodes, num_nodes)) ;
-    GRB_TRY (GxB_Matrix_build_Scalar_Vector(Y, Output_i, Output_j, Scalar_one, NULL)) ;
+    GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
+    GRB_TRY (GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, NULL)) ;
+
+    LAGraph_Kind kind = LAGraph_ADJACENCY_DIRECTED ;
+    LG_TRY (LAGraph_New (&G, &M, kind, msg)) ;
+    M = NULL ;
+    LG_TRY (LAGraph_DeleteSelfEdges (G, msg)) ;
 
     LG_FREE_WORK ;
-    (*Yhandle) = Y ;
+    (*Yhandle) = G ;
     return (GrB_SUCCESS) ;
 }

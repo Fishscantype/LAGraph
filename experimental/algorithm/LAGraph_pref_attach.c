@@ -15,8 +15,6 @@
 
 //------------------------------------------------------------------------------
 
-// TODO: intro section
-
 #define LG_FREE_WORK                            \
 {                                               \
     GrB_free (&State) ;                         \
@@ -242,7 +240,6 @@ int LAGraph_pref_attach
     // Initialize Output_i and Output_j vectors
     //--------------------------------------------------------------------------
 
-    //TODO: come back and reduce to uint32_t if possible
     GRB_TRY (GrB_Vector_new (&Output_i, GrB_UINT64, num_edges)) ;
     GRB_TRY (GrB_Vector_new (&Output_j, GrB_UINT64, num_edges)) ;
 
@@ -272,7 +269,6 @@ int LAGraph_pref_attach
     GRB_TRY (GrB_Scalar_new (&scale_scalar, scale_param_type)) ;
     GRB_TRY (GrB_Scalar_new (&chunk_index_scalar, chunk_index_param_type)) ;
 
-    //TODO: come back and reduce to uint32_t if possible
     GRB_TRY (GrB_IndexUnaryOp_new (&scale_op, (GxB_index_unary_function) pref_attach_scale_op, GrB_UINT64, GrB_UINT64, scale_param_type)) ;
     GRB_TRY (GrB_IndexUnaryOp_new (&chunk_index_op, (GxB_index_unary_function) pref_attach_chunk_index_op, GrB_UINT64, GrB_UINT64, chunk_index_param_type)) ;
 
@@ -436,6 +432,7 @@ int LAGraph_pref_attach
     //--------------------------------------------------------------------------
     // Build output Graph
     //--------------------------------------------------------------------------
+    
     GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
     GRB_TRY (GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, NULL)) ;
 
@@ -447,71 +444,4 @@ int LAGraph_pref_attach
     LG_FREE_WORK ;
     (*Yhandle) = G ;
     return (GrB_SUCCESS) ;
-    #if 0
-    printf("DEBUG: about to build matrix, num_nodes = %lu\n", (unsigned long) num_nodes) ;
-    
-    // Check Output_i and Output_j for out-of-range values
-    {
-        GrB_Index oi_size, oj_size, oi_nvals, oj_nvals ;
-        GrB_Vector_size(&oi_size, Output_i) ;
-        GrB_Vector_size(&oj_size, Output_j) ;
-        GrB_Vector_nvals(&oi_nvals, Output_i) ;
-        GrB_Vector_nvals(&oj_nvals, Output_j) ;
-        printf("DEBUG: Output_i size=%lu nvals=%lu, Output_j size=%lu nvals=%lu\n",
-            (unsigned long) oi_size, (unsigned long) oi_nvals,
-            (unsigned long) oj_size, (unsigned long) oj_nvals) ;
-        
-        GrB_Index num_edges_total = oi_size ;
-        for (GrB_Index k = 0 ; k < num_edges_total ; k++)
-        {
-            uint64_t vi = 0, vj = 0 ;
-            GrB_Info ri = GrB_Vector_extractElement_UINT64(&vi, Output_i, k) ;
-            GrB_Info rj = GrB_Vector_extractElement_UINT64(&vj, Output_j, k) ;
-            if (ri == GrB_SUCCESS && vi >= num_nodes)
-            {
-                printf("DEBUG: Output_i[%lu] = %lu >= num_nodes %lu\n",
-                    (unsigned long) k, (unsigned long) vi, (unsigned long) num_nodes) ;
-            }
-            if (rj == GrB_SUCCESS && vj >= num_nodes)
-            {
-                printf("DEBUG: Output_j[%lu] = %lu >= num_nodes %lu\n",
-                    (unsigned long) k, (unsigned long) vj, (unsigned long) num_nodes) ;
-            }
-            if (ri != GrB_SUCCESS)
-            {
-                printf("DEBUG: Output_i[%lu] missing (info=%d)\n",
-                    (unsigned long) k, ri) ;
-            }
-            if (rj != GrB_SUCCESS)
-            {
-                printf("DEBUG: Output_j[%lu] missing (info=%d)\n",
-                    (unsigned long) k, rj) ;
-            }
-        }
-    }
-
-    GrB_Info build_info ;
-    GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
-    printf("DEBUG: Matrix_new succeeded\n") ;
-
-    build_info = GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, GrB_PLUS_UINT8) ;
-    printf("DEBUG: Matrix_build returned: %d\n", build_info) ;
-    if (build_info != GrB_SUCCESS)
-    {
-        LG_FREE_ALL ;
-        return (build_info) ;
-    }
-
-    printf("DEBUG: about to create graph\n") ;
-    LAGraph_Kind kind = directed ? LAGraph_ADJACENCY_DIRECTED : LAGraph_ADJACENCY_UNDIRECTED ;
-    LG_TRY (LAGraph_New (&G, &M, kind, msg)) ;
-    M = NULL ;
-    printf("DEBUG: about to delete self edges\n") ;
-    LG_TRY (LAGraph_DeleteSelfEdges (G, msg)) ;
-    printf("DEBUG: done\n") ;
-
-    LG_FREE_WORK ;
-    (*Yhandle) = G ;
-    return (GrB_SUCCESS) ;
-    #endif
 }

@@ -14,6 +14,7 @@
 // Contributed by Matthew Fisher, Texas A&M University
 
 //------------------------------------------------------------------------------
+// TODO: add description
 
 #define LG_FREE_WORK                        \
 {                                           \
@@ -54,30 +55,29 @@ typedef struct
 
 void RMAT_Operator_i_32
 (
-    void *z,
-    const void *x,
+    uint32_t *z,
+    const uint64_t *r,
     GrB_Index i,
     GrB_Index j,
-    const void *y
+    const RMAT_Params *p
 )
 {
-    const uint64_t *r = (const uint64_t *) x;
-    const RMAT_Params *p = (const RMAT_Params *) y;
-
     uint64_t state = *r ;
     uint32_t result = 0 ;
     uint64_t ab_threshold = p->a + p->b ;
-    
+
     for(int it = 0; it < p->n; ++it){
         bool cond = (state > ab_threshold) ;
         result = (result << 1) | (cond ? 1 : 0) ;
 
         // XORshift64 for random state on next iteration
+        // TODO: check that this gives independent states for each run
+        // right now prolly interferes with random next function
         state ^= state << 13 ;
         state ^= state >> 7 ;
         state ^= state << 17 ;
     }
-    *((uint32_t *)z) = result;
+    *(z) = result;
 }
 #define RMAT_I_32                                                         \
 "void RMAT_Operator_i_32(                                              \n"\
@@ -120,7 +120,7 @@ void RMAT_Operator_i_64
     uint64_t state = *r ;
     uint64_t result = 0 ;
     uint64_t ab_threshold = p->a + p->b ;
-    
+
     for(int it = 0; it < p->n; ++it){
         bool cond = (state > ab_threshold) ;
         result = (result << 1) | (cond ? 1 : 0) ;
@@ -174,7 +174,7 @@ void RMAT_Operator_j_32
     uint32_t result = 0 ;
     uint64_t ab_threshold = p->a + p->b ;
     uint64_t abc_threshold = ab_threshold + p->c ;
-    
+    //TODO: comment conditions
     for(int it = 0; it < p->n; ++it){
         bool cond = (
             (state > p->a && state <= ab_threshold) ||
@@ -283,16 +283,18 @@ void RMAT_Operator_j_64
 int LAGraph_RMAT
 (
     // output
-    LAGraph_Graph *Yhandle,    // Y, created on output
+    LAGraph_Graph *Yhandle, // Y, created on output
     // input:
     int log2_nodes,
     GrB_Index num_edges, //approximate number of edges
     uint64_t seed,
-    double a, double b, double c, double d, // should add to 1.0
+    double a,
+    double b,
+    double c,
+    double d, // a + b + c + d should be 1.0
     char *msg
 )
 {
-
     //--------------------------------------------------------------------------
     // Set up workspace
     //--------------------------------------------------------------------------
@@ -308,7 +310,7 @@ int LAGraph_RMAT
     GrB_Scalar Scalar_one = NULL ;
     GrB_Matrix M = NULL ;
     LAGraph_Graph G = NULL ;
-    
+
     LG_CLEAR_MSG ;
 
     //--------------------------------------------------------------------------
@@ -317,7 +319,7 @@ int LAGraph_RMAT
 
     LG_ASSERT (Yhandle != NULL, GrB_NULL_POINTER) ;
     (*Yhandle) = NULL ;
- 
+
     LG_ASSERT_MSG (log2_nodes > 0, GrB_INVALID_VALUE, "log2_nodes must be positive") ;
     LG_ASSERT_MSG (log2_nodes <= 60, GrB_INVALID_VALUE, "log2_nodes cannot exceed 60") ;
     LG_ASSERT_MSG (num_edges > 0, GrB_INVALID_VALUE, "num_edges must be positive") ;
@@ -356,11 +358,15 @@ int LAGraph_RMAT
     Uint_Size = (use_64 ? GrB_UINT64 : GrB_UINT32) ;
 
     if(use_64){
-        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_i, (GxB_index_unary_function) RMAT_Operator_i_64, Uint_Size, GrB_UINT64, param_type)) ;
-        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_j, (GxB_index_unary_function) RMAT_Operator_j_64, Uint_Size, GrB_UINT64, param_type)) ;
+        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_i, (GxB_index_unary_function)
+            RMAT_Operator_i_64, Uint_Size, GrB_UINT64, param_type)) ;
+        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_j, (GxB_index_unary_function)
+            RMAT_Operator_j_64, Uint_Size, GrB_UINT64, param_type)) ;
     } else {
-        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_i, (GxB_index_unary_function) RMAT_Operator_i_32, Uint_Size, GrB_UINT64, param_type)) ;
-        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_j, (GxB_index_unary_function) RMAT_Operator_j_32, Uint_Size, GrB_UINT64, param_type)) ;
+        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_i, (GxB_index_unary_function)
+            RMAT_Operator_i_32, Uint_Size, GrB_UINT64, param_type)) ;
+        GRB_TRY (GrB_IndexUnaryOp_new (&RMAT_op_j, (GxB_index_unary_function)
+            RMAT_Operator_j_32, Uint_Size, GrB_UINT64, param_type)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -368,32 +374,28 @@ int LAGraph_RMAT
     //--------------------------------------------------------------------------
 
     GRB_TRY (GrB_Vector_new (&Output_i, Uint_Size, num_edges)) ;
-    GRB_TRY (GrB_apply (Output_i, NULL, NULL, RMAT_op_i, State, params_scalar, NULL)) ;
+    GRB_TRY (GrB_apply (
+        Output_i, NULL, NULL, RMAT_op_i, State, params_scalar, NULL)) ;
 
     GRB_TRY (GrB_Vector_new (&Output_j, Uint_Size, num_edges)) ;
-    GRB_TRY (GrB_apply (Output_j, NULL, NULL, RMAT_op_j, State, params_scalar, NULL)) ;
+    GRB_TRY (GrB_apply (
+        Output_j, NULL, NULL, RMAT_op_j, State, params_scalar, NULL)) ;
 
     //--------------------------------------------------------------------------
     // Create scalar
     //--------------------------------------------------------------------------
 
-    GRB_TRY (GrB_Scalar_new(&Scalar_one, GrB_UINT8)) ;
-    GRB_TRY (GrB_Scalar_setElement_UINT8(Scalar_one, 1)) ;
-
-    // GRB_TRY (GrB_Matrix_new(&Y, GrB_UINT8, num_nodes, num_nodes)) ;
-    // GRB_TRY (GxB_Matrix_build_Scalar_Vector(Y, Output_i, Output_j, Scalar_one, NULL)) ;
-
-    // LG_FREE_WORK ;
-    // (*Yhandle) = Y ;
-    // return (GrB_SUCCESS) ;
+    GRB_TRY (GrB_Scalar_new(&Scalar_one, GrB_BOOL)) ;
+    GRB_TRY (GrB_Scalar_setElement_BOOL(Scalar_one, 1)) ;
 
     //--------------------------------------------------------------------------
     // Build output Graph
     //--------------------------------------------------------------------------
 
     GrB_Index num_nodes = ((GrB_Index) 1) << log2_nodes ;
-    GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
-    GRB_TRY (GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, NULL)) ;
+    GRB_TRY (GrB_Matrix_new(&M, GrB_BOOL, num_nodes, num_nodes)) ;
+    GRB_TRY (GxB_Matrix_build_Scalar_Vector (
+        M, Output_i, Output_j, Scalar_one, NULL)) ;
 
     LAGraph_Kind kind = LAGraph_ADJACENCY_DIRECTED ;
     LG_TRY (LAGraph_New (&G, &M, kind, msg)) ;

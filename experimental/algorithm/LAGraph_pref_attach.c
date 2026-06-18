@@ -14,6 +14,7 @@
 // Contributed by Matthew Fisher, Texas A&M University
 
 //------------------------------------------------------------------------------
+//TODO: document
 
 #define LG_FREE_WORK                            \
 {                                               \
@@ -69,6 +70,7 @@ typedef struct
 "    uint64_t edges ;               \n"\
 "} Chunk_Index_Params ;             "
 
+// TODO: comment
 void pref_attach_scale_op
 (
     void *z,
@@ -151,6 +153,7 @@ int LAGraph_pref_attach
     GrB_Vector Input_j,
     GrB_Index incoming_edges,
     GrB_Index outgoing_edges,
+    // FIXME: is this valirable name and comment incorrect?
     bool directed, // if directed, do outgoing edges and mirror
     char *msg
 )
@@ -177,7 +180,7 @@ int LAGraph_pref_attach
     GrB_Scalar chunk_index_scalar = NULL ;
     GrB_Matrix M = NULL ;
     LAGraph_Graph G = NULL ;
-    
+
     LG_CLEAR_MSG ;
 
     //--------------------------------------------------------------------------
@@ -194,11 +197,12 @@ int LAGraph_pref_attach
     LG_ASSERT_MSG (incoming_edges >= 0, GrB_INVALID_VALUE, "incoming_edges must be non-negative") ;
     LG_ASSERT_MSG (batch_size > 0, GrB_INVALID_VALUE, "batch_size must be positive") ;
     LG_ASSERT_MSG (batch_growth_factor >= 1, GrB_INVALID_VALUE, "batch_growth_factor must be >= 1") ;
- 
+
     //--------------------------------------------------------------------------
     // Evaluate seed vectors
     //--------------------------------------------------------------------------
 
+    // FIXME: seed is not a good name for this
     GrB_Index seed_nvals_i ;
     GRB_TRY (GrB_Vector_nvals (&seed_nvals_i, Input_i)) ;
     GrB_Index seed_nvals_j ;
@@ -218,17 +222,21 @@ int LAGraph_pref_attach
     if(!directed){
         incoming_edges = 0 ;
     }
+
     uint64_t num_nodes_to_add = (num_nodes < base_node ? 0 : num_nodes - base_node) ;
     uint64_t num_edges = seed_nvals_i ;
 
     uint64_t num_batches = 0 ;
     uint64_t nodes_counted = 0 ;
     uint64_t b_size = batch_size ;
+
     while(nodes_counted < num_nodes_to_add){
         uint64_t nodes_in_batch = b_size ;
+
         if (nodes_counted + nodes_in_batch > num_nodes_to_add){
             nodes_in_batch = num_nodes_to_add - nodes_counted ;
         }
+
         num_edges += nodes_in_batch * (incoming_edges + outgoing_edges) ;
         nodes_counted += nodes_in_batch ;
         ++num_batches ;
@@ -391,7 +399,7 @@ int LAGraph_pref_attach
     //--------------------------------------------------------------------------
     // Mirror edges if undirected
     //-------------------------------------------------------------------------
-    
+
     if(!directed){
         GrB_Index total_edges ;
         GRB_TRY (GrB_Vector_nvals (&total_edges, Output_i));
@@ -432,7 +440,7 @@ int LAGraph_pref_attach
     //--------------------------------------------------------------------------
     // Build output Graph
     //--------------------------------------------------------------------------
-    
+
     GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
     GRB_TRY (GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, NULL)) ;
 

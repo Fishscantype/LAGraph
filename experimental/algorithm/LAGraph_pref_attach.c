@@ -39,7 +39,7 @@
 {                                           \
     LG_FREE_WORK ;                          \
     GrB_free (&M) ;                         \
-    LAGraph_Delete (&G, msg) ;              \
+    LAGraph_Delete (G, msg) ;               \
 }
 
 #include "LG_internal.h"
@@ -87,9 +87,7 @@ void pref_attach_scale_op
     if (edge_count == 0){
         *((uint64_t *) z) = 0 ;
     } else {
-        double scaled = ((double)(*r) / (double) UINT64_MAX)
-            * (double)(edge_count - 1) ;
-        *((uint64_t *) z) = (uint64_t) scaled ;
+        *((uint64_t *) z) = (*r) % edge_count ;
     }
 }
 #define PREF_ATTACH_SCALE_OP                                              \
@@ -143,7 +141,7 @@ void pref_attach_chunk_index_op
 int LAGraph_pref_attach
 (
     // output
-    LAGraph_Graph *Yhandle,    // Y, created on output
+    LAGraph_Graph *G,    // G, created on output
     // input:
     GrB_Index num_nodes,
     uint64_t seed,
@@ -179,7 +177,6 @@ int LAGraph_pref_attach
     GrB_Scalar scale_scalar = NULL ;
     GrB_Scalar chunk_index_scalar = NULL ;
     GrB_Matrix M = NULL ;
-    LAGraph_Graph G = NULL ;
 
     LG_CLEAR_MSG ;
 
@@ -187,8 +184,8 @@ int LAGraph_pref_attach
     // check inputs
     //--------------------------------------------------------------------------
 
-    LG_ASSERT (Yhandle != NULL, GrB_NULL_POINTER) ;
-    (*Yhandle) = NULL ;
+    LG_ASSERT (G != NULL, GrB_NULL_POINTER) ;
+    (*G) = NULL ;
 
     LG_ASSERT (Input_i != NULL, GrB_NULL_POINTER) ;
     LG_ASSERT (Input_j != NULL, GrB_NULL_POINTER) ;
@@ -243,7 +240,7 @@ int LAGraph_pref_attach
         b_size = (b_size * batch_growth_factor == 0 ? 1 : b_size * batch_growth_factor) ;
         // printf ("%" PRIu64 " counted out of %" PRIu64 "\n", (uint64_t) nodes_counted, (uint64_t) num_nodes_to_add) ;
     }
-    
+
     //--------------------------------------------------------------------------
     // Initialize Output_i and Output_j vectors
     //--------------------------------------------------------------------------
@@ -271,7 +268,13 @@ int LAGraph_pref_attach
     // Prepare parameter structs, operators, and workspace vectors
     //--------------------------------------------------------------------------
 
-    GRB_TRY (GrB_Type_new (&scale_param_type, sizeof (Scale_Params))) ;
+    // GrB_set (GrB_GLOBAL, true, GxB_BURBLE) ;
+    GRB_TRY (GxB_Type_new (
+        &scale_param_type, sizeof (Scale_Params), "Scale_Params", SCALE_PARAMS
+    )) ;
+    // TODO: use GxB method to feed in the JIT strings
+    // verify JIT is running with the burble
+    // looking for JIT compile then JIT cpu NOT generic
     GRB_TRY (GrB_Type_new (&chunk_index_param_type, sizeof (Chunk_Index_Params))) ;
 
     GRB_TRY (GrB_Scalar_new (&scale_scalar, scale_param_type)) ;
@@ -280,6 +283,7 @@ int LAGraph_pref_attach
     GRB_TRY (GrB_IndexUnaryOp_new (&scale_op, (GxB_index_unary_function) pref_attach_scale_op, GrB_UINT64, GrB_UINT64, scale_param_type)) ;
     GRB_TRY (GrB_IndexUnaryOp_new (&chunk_index_op, (GxB_index_unary_function) pref_attach_chunk_index_op, GrB_UINT64, GrB_UINT64, chunk_index_param_type)) ;
 
+    // TODO: maybe rename vectors to lowercase
     GRB_TRY (GrB_Vector_new (&Scaled_state, GrB_UINT64, num_edges)) ;
     GRB_TRY (GrB_Vector_new (&Batch_random, GrB_UINT64, num_edges)) ;
     GRB_TRY (GrB_Vector_new (&Batch_gather, GrB_UINT64, num_edges)) ;
@@ -295,7 +299,7 @@ int LAGraph_pref_attach
 
     for(int batch = 0; batch < num_batches; ++batch){
         // Prepare variables for batch
-        uint64_t nodes_in_batch = (curr_batch_size > num_nodes - curr_node ? num_nodes - curr_node : curr_batch_size) ;
+        uint64_t nodes_in_batch = LAGRAPH_MIN (num_nodes - curr_node, curr_batch_size) ;
         GrB_Index outgoing_edges_in_batch = (GrB_Index) nodes_in_batch * (GrB_Index) outgoing_edges ;
         GrB_Index incoming_edges_in_batch = (GrB_Index) nodes_in_batch * (GrB_Index) incoming_edges ;
         GrB_Index edges_in_batch = incoming_edges_in_batch + outgoing_edges_in_batch ;
@@ -305,6 +309,8 @@ int LAGraph_pref_attach
 
         //---------Outgoing edges section---------
         if(outgoing_edges_in_batch > 0){
+            // TODO: consider removing Batch_random, Scaled_state, Batch_chunk
+            // May require some funky arithmetic but it should be all linear
             GRB_TRY (GrB_Vector_resize (Batch_random, outgoing_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Scaled_state, outgoing_edges_in_batch)) ;
             GRB_TRY (GrB_Vector_resize (Batch_gather, outgoing_edges_in_batch)) ;
@@ -338,13 +344,14 @@ int LAGraph_pref_attach
             scale_out_params.edges_per_node = (uint64_t) outgoing_edges ;
             GRB_TRY (GrB_Scalar_setElement_UDT (scale_scalar, &scale_out_params)) ;
 
-            GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
-            GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random, scale_scalar, NULL)) ;
+            // scale down random numbers in about range(0, i)
+            GRB_TRY (GrB_apply (Batch_random, NULL, NULL, scale_op,
+                Batch_random, scale_scalar, NULL)) ;
+
+            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_j, Scaled_state, NULL)) ;
+            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
 
             GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
-            GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_j, Scaled_state, NULL)) ;
-
-            GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
         }
 
         //---------Incoming edges section---------
@@ -385,10 +392,9 @@ int LAGraph_pref_attach
             GRB_TRY (GrB_Vector_clear (Scaled_state)) ;
             GRB_TRY (GrB_apply (Scaled_state, NULL, NULL, scale_op, Batch_random, scale_scalar, NULL)) ;
 
-            GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
             GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_i, Scaled_state, NULL)) ;
-
             GRB_TRY (GrB_Vector_assign (Output_i, NULL, NULL, Batch_gather, range_in, GxB_RANGE, NULL)) ;
+            GRB_TRY (GrB_Vector_clear (Batch_gather)) ;
         }
 
         curr_node += nodes_in_batch ;
@@ -434,22 +440,23 @@ int LAGraph_pref_attach
     // Create scalar for unweighted edges
     //--------------------------------------------------------------------------
 
-    GRB_TRY (GrB_Scalar_new(&Scalar_one, GrB_UINT8)) ;
-    GRB_TRY (GrB_Scalar_setElement_UINT8(Scalar_one, 1)) ;
+    GRB_TRY (GrB_Scalar_new(&Scalar_one, GrB_BOOL)) ;
+    GRB_TRY (GrB_Scalar_setElement_BOOL (Scalar_one, true)) ;
 
     //--------------------------------------------------------------------------
     // Build output Graph
     //--------------------------------------------------------------------------
 
-    GRB_TRY (GrB_Matrix_new(&M, GrB_UINT8, num_nodes, num_nodes)) ;
+    GRB_TRY (GrB_Matrix_new(&M, GrB_BOOL, num_nodes, num_nodes)) ;
     GRB_TRY (GxB_Matrix_build_Scalar_Vector(M, Output_i, Output_j, Scalar_one, NULL)) ;
 
     LAGraph_Kind kind = directed ? LAGraph_ADJACENCY_DIRECTED : LAGraph_ADJACENCY_UNDIRECTED ;
-    LG_TRY (LAGraph_New (&G, &M, kind, msg)) ;
+    LG_TRY (LAGraph_New (G, &M, kind, msg)) ;
     M = NULL ;
-    LG_TRY (LAGraph_DeleteSelfEdges (G, msg)) ;
+    // TODO: possibly redundant?
+    LG_TRY (LAGraph_DeleteSelfEdges (*G, msg)) ;
 
     LG_FREE_WORK ;
-    (*Yhandle) = G ;
+
     return (GrB_SUCCESS) ;
 }

@@ -138,6 +138,11 @@ void pref_attach_chunk_index_op
 "    *((uint64_t *) z) = p->base_node + (uint64_t) i / p->edges;            \n"\
 "}                                                                       "
 
+//LAGr_pref_attach
+//  takes seed matrix in form of GrB_Matrix
+//LAGraph_pref_attach
+//  creates seed
+//
 int LAGraph_pref_attach
 (
     // output
@@ -152,6 +157,7 @@ int LAGraph_pref_attach
     GrB_Index incoming_edges,
     GrB_Index outgoing_edges,
     // FIXME: is this valirable name and comment incorrect?
+    // TODO: change to enum
     bool directed, // if directed, do outgoing edges and mirror
     char *msg
 )
@@ -348,6 +354,9 @@ int LAGraph_pref_attach
             GRB_TRY (GrB_apply (Batch_random, NULL, NULL, scale_op,
                 Batch_random, scale_scalar, NULL)) ;
 
+            GxB_print(Batch_gather, GxB_SUMMARY) ;
+            GxB_print(Output_j, GxB_SUMMARY) ;
+            GxB_print(Scaled_state, GxB_SUMMARY) ;
             GRB_TRY (GxB_Vector_extract_Vector (Batch_gather, NULL, NULL, Output_j, Scaled_state, NULL)) ;
             GRB_TRY (GrB_Vector_assign (Output_j, NULL, NULL, Batch_gather, range_out, GxB_RANGE, NULL)) ;
 
